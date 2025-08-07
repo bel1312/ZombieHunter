@@ -8,6 +8,15 @@ const game = {
     zombies: [],
     bosses: [],
     particles: [],
+    bloodSplats: [],
+    pillars: [
+        {x: 150, y: 100, radius: 25},
+        {x: 600, y: 150, radius: 25},
+        {x: 200, y: 400, radius: 25},
+        {x: 550, y: 450, radius: 25},
+        {x: 350, y: 200, radius: 25},
+        {x: 100, y: 350, radius: 25}
+    ],
     level: 1,
     score: 0,
     zombiesKilled: 0,
@@ -57,7 +66,7 @@ function spawnZombie() {
     }
     
     game.zombies.push({
-        x, y, health: 50 + game.level * 10, speed: 0.5 + game.level * 0.1,
+        x, y, health: 50 + game.level * 10, speed: 0.3 + game.level * 0.05,
         size: 15, type: 'normal'
     });
 }
@@ -74,17 +83,31 @@ function spawnBoss() {
     }
     
     game.bosses.push({
-        x, y, health: 300 + game.level * 50, speed: 0.3 + game.level * 0.05,
+        x, y, health: 300 + game.level * 50, speed: 0.2 + game.level * 0.03,
         size: 30, type: 'boss', lastAttack: 0
     });
 }
 
 function updatePlayer() {
+    // Store old position
+    const oldX = game.player.x;
+    const oldY = game.player.y;
+    
     // Movement
     if (game.keys['w']) game.player.y -= game.player.speed;
     if (game.keys['s']) game.player.y += game.player.speed;
     if (game.keys['a']) game.player.x -= game.player.speed;
     if (game.keys['d']) game.player.x += game.player.speed;
+
+    // Check pillar collisions
+    for (const pillar of game.pillars) {
+        const dist = Math.hypot(game.player.x - pillar.x, game.player.y - pillar.y);
+        if (dist < pillar.radius + 15) {
+            game.player.x = oldX;
+            game.player.y = oldY;
+            break;
+        }
+    }
 
     // Boundaries
     game.player.x = Math.max(15, Math.min(canvas.width - 15, game.player.x));
@@ -129,6 +152,14 @@ function updateBullets() {
             return false;
         }
         
+        // Check pillar collisions
+        for (const pillar of game.pillars) {
+            const dist = Math.hypot(bullet.x - pillar.x, bullet.y - pillar.y);
+            if (dist < pillar.radius) {
+                return false;
+            }
+        }
+        
         // Check zombie collisions
         for (let i = game.zombies.length - 1; i >= 0; i--) {
             const zombie = game.zombies[i];
@@ -147,6 +178,9 @@ function updateBullets() {
                     });
                     createExplosion(bullet.x, bullet.y);
                 }
+                
+                // Blood splash effect
+                createBloodSplash(zombie.x, zombie.y);
                 
                 if (zombie.health <= 0) {
                     game.zombies.splice(i, 1);
@@ -169,6 +203,9 @@ function updateBullets() {
                     createExplosion(bullet.x, bullet.y);
                 }
                 
+                // Blood splash effect
+                createBloodSplash(boss.x, boss.y);
+                
                 if (boss.health <= 0) {
                     game.bosses.splice(i, 1);
                     game.score += 100;
@@ -185,13 +222,40 @@ function updateBullets() {
 function updateZombies() {
     game.zombies.forEach(zombie => {
         // Move towards player
-        const dx = game.player.x - zombie.x;
-        const dy = game.player.y - zombie.y;
+        let dx = game.player.x - zombie.x;
+        let dy = game.player.y - zombie.y;
         const dist = Math.hypot(dx, dy);
         
         if (dist > 0) {
-            zombie.x += (dx / dist) * zombie.speed;
-            zombie.y += (dy / dist) * zombie.speed;
+            // Check for pillar in the way
+            let blocked = false;
+            for (const pillar of game.pillars) {
+                const pillarDist = Math.hypot(zombie.x - pillar.x, zombie.y - pillar.y);
+                if (pillarDist < pillar.radius + 30) { // Detection range
+                    blocked = true;
+                    // Calculate direction to go around pillar
+                    const pillarDx = pillar.x - zombie.x;
+                    const pillarDy = pillar.y - zombie.y;
+                    // Go perpendicular to pillar direction
+                    dx = -pillarDy;
+                    dy = pillarDx;
+                    // Normalize
+                    const perpDist = Math.hypot(dx, dy);
+                    if (perpDist > 0) {
+                        dx /= perpDist;
+                        dy /= perpDist;
+                    }
+                    break;
+                }
+            }
+            
+            if (!blocked) {
+                dx /= dist;
+                dy /= dist;
+            }
+            
+            zombie.x += dx * zombie.speed;
+            zombie.y += dy * zombie.speed;
         }
         
         // Damage player on contact
@@ -204,13 +268,40 @@ function updateZombies() {
 function updateBosses() {
     game.bosses.forEach(boss => {
         // Move towards player
-        const dx = game.player.x - boss.x;
-        const dy = game.player.y - boss.y;
+        let dx = game.player.x - boss.x;
+        let dy = game.player.y - boss.y;
         const dist = Math.hypot(dx, dy);
         
         if (dist > 0) {
-            boss.x += (dx / dist) * boss.speed;
-            boss.y += (dy / dist) * boss.speed;
+            // Check for pillar in the way
+            let blocked = false;
+            for (const pillar of game.pillars) {
+                const pillarDist = Math.hypot(boss.x - pillar.x, boss.y - pillar.y);
+                if (pillarDist < pillar.radius + 40) { // Detection range
+                    blocked = true;
+                    // Calculate direction to go around pillar
+                    const pillarDx = pillar.x - boss.x;
+                    const pillarDy = pillar.y - boss.y;
+                    // Go perpendicular to pillar direction
+                    dx = -pillarDy;
+                    dy = pillarDx;
+                    // Normalize
+                    const perpDist = Math.hypot(dx, dy);
+                    if (perpDist > 0) {
+                        dx /= perpDist;
+                        dy /= perpDist;
+                    }
+                    break;
+                }
+            }
+            
+            if (!blocked) {
+                dx /= dist;
+                dy /= dist;
+            }
+            
+            boss.x += dx * boss.speed;
+            boss.y += dy * boss.speed;
         }
         
         // Damage player on contact
@@ -227,7 +318,7 @@ function updateBosses() {
                     x: boss.x + Math.cos(angle) * 40,
                     y: boss.y + Math.sin(angle) * 40,
                     health: 30,
-                    speed: 1,
+                    speed: 0.6,
                     size: 10,
                     type: 'mini'
                 });
@@ -249,6 +340,27 @@ function createExplosion(x, y) {
     }
 }
 
+function createBloodSplash(x, y) {
+    // Create blood splat on ground
+    game.bloodSplats.push({
+        x: x + (Math.random() - 0.5) * 10,
+        y: y + (Math.random() - 0.5) * 10,
+        size: Math.random() * 8 + 4,
+        alpha: 0.8
+    });
+    
+    // Create blood particles
+    for (let i = 0; i < 5; i++) {
+        game.particles.push({
+            x, y,
+            vx: (Math.random() - 0.5) * 6,
+            vy: (Math.random() - 0.5) * 6,
+            life: 20,
+            color: `rgb(139, 0, 0)`
+        });
+    }
+}
+
 function updateParticles() {
     game.particles = game.particles.filter(particle => {
         particle.x += particle.vx;
@@ -258,13 +370,19 @@ function updateParticles() {
         particle.life--;
         return particle.life > 0;
     });
+    
+    // Fade blood splats over time
+    game.bloodSplats = game.bloodSplats.filter(splat => {
+        splat.alpha -= 0.002;
+        return splat.alpha > 0;
+    });
 }
 
 function updateGame() {
     game.gameTime++;
     
     // Spawn zombies
-    if (Math.random() < 0.02 + game.level * 0.005) {
+    if (Math.random() < 0.008 + game.level * 0.003) {
         spawnZombie();
     }
     
@@ -288,18 +406,72 @@ function updateGame() {
 }
 
 function render() {
-    // Clear canvas
-    ctx.fillStyle = '#1a1a1a';
+    // Draw background
+    ctx.fillStyle = '#6b6b6b';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
+    
+    // Draw pillars (cylindrical)
+    game.pillars.forEach(pillar => {
+        // Shadow
+        ctx.fillStyle = '#3a3a3a';
+        ctx.beginPath();
+        ctx.arc(pillar.x + 2, pillar.y + 2, pillar.radius, 0, Math.PI * 2);
+        ctx.fill();
+        
+        // Main pillar
+        ctx.fillStyle = '#5a5a5a';
+        ctx.beginPath();
+        ctx.arc(pillar.x, pillar.y, pillar.radius, 0, Math.PI * 2);
+        ctx.fill();
+        
+        // 3D highlight
+        ctx.fillStyle = '#7a7a7a';
+        ctx.beginPath();
+        ctx.arc(pillar.x - 3, pillar.y - 3, pillar.radius * 0.7, 0, Math.PI * 2);
+        ctx.fill();
+    });
+    
+    // Draw blood splats
+    game.bloodSplats.forEach(splat => {
+        ctx.fillStyle = `rgba(139, 0, 0, ${splat.alpha})`;
+        ctx.beginPath();
+        ctx.arc(splat.x, splat.y, splat.size, 0, Math.PI * 2);
+        ctx.fill();
+    });
     
     // Draw player
     ctx.save();
     ctx.translate(game.player.x, game.player.y);
     ctx.rotate(game.player.angle);
-    ctx.fillStyle = '#00ff00';
-    ctx.fillRect(-10, -5, 20, 10);
-    ctx.fillStyle = '#008800';
-    ctx.fillRect(10, -2, 8, 4);
+    
+    // Body (shoulders/torso)
+    ctx.fillStyle = '#4a90e2';
+    ctx.fillRect(-8, -4, 16, 8);
+    
+    // Head
+    ctx.fillStyle = '#ffdbac';
+    ctx.beginPath();
+    ctx.arc(0, 0, 6, 0, Math.PI * 2);
+    ctx.fill();
+    
+    // Arms
+    ctx.fillStyle = '#4a90e2';
+    ctx.fillRect(-10, -2, 6, 4); // Left arm
+    ctx.fillRect(8, -2, 6, 4);   // Right arm
+    
+    // Hands
+    ctx.fillStyle = '#ffdbac';
+    ctx.beginPath();
+    ctx.arc(-7, 0, 2, 0, Math.PI * 2); // Left hand
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(11, 0, 2, 0, Math.PI * 2); // Right hand
+    ctx.fill();
+    
+    // Gun (held in right hand)
+    ctx.fillStyle = '#333';
+    ctx.fillRect(13, -1, 8, 2);
+    
     ctx.restore();
     
     // Draw bullets
@@ -310,23 +482,66 @@ function render() {
     
     // Draw zombies
     game.zombies.forEach(zombie => {
-        ctx.fillStyle = zombie.type === 'mini' ? '#ff6666' : '#ff0000';
-        ctx.fillRect(zombie.x - zombie.size/2, zombie.y - zombie.size/2, zombie.size, zombie.size);
+        ctx.save();
+        ctx.translate(zombie.x, zombie.y);
         
-        // Health bar
-        if (zombie.health < (50 + game.level * 10)) {
-            const healthPercent = zombie.health / (50 + game.level * 10);
-            ctx.fillStyle = '#333';
-            ctx.fillRect(zombie.x - zombie.size/2, zombie.y - zombie.size/2 - 8, zombie.size, 3);
-            ctx.fillStyle = '#ff0000';
-            ctx.fillRect(zombie.x - zombie.size/2, zombie.y - zombie.size/2 - 8, zombie.size * healthPercent, 3);
-        }
+        // Body (shoulders/torso)
+        ctx.fillStyle = zombie.type === 'mini' ? '#8b4513' : '#654321';
+        ctx.fillRect(-6, -3, 12, 6);
+        
+        // Head
+        ctx.fillStyle = '#90ee90';
+        ctx.beginPath();
+        ctx.arc(0, 0, 5, 0, Math.PI * 2);
+        ctx.fill();
+        
+        // Arms extended forward
+        ctx.fillStyle = zombie.type === 'mini' ? '#8b4513' : '#654321';
+        ctx.fillRect(-8, -1, 6, 2); // Left arm
+        ctx.fillRect(2, -1, 6, 2);  // Right arm
+        
+        // Hands
+        ctx.fillStyle = '#90ee90';
+        ctx.beginPath();
+        ctx.arc(-8, 0, 2, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(8, 0, 2, 0, Math.PI * 2);
+        ctx.fill();
+        
+        ctx.restore();
     });
     
     // Draw bosses
     game.bosses.forEach(boss => {
-        ctx.fillStyle = '#800080';
-        ctx.fillRect(boss.x - boss.size/2, boss.y - boss.size/2, boss.size, boss.size);
+        ctx.save();
+        ctx.translate(boss.x, boss.y);
+        
+        // Body (larger shoulders/torso)
+        ctx.fillStyle = '#4a0e4e';
+        ctx.fillRect(-12, -6, 24, 12);
+        
+        // Head (larger)
+        ctx.fillStyle = '#6b8e23';
+        ctx.beginPath();
+        ctx.arc(0, 0, 8, 0, Math.PI * 2);
+        ctx.fill();
+        
+        // Arms extended forward (larger)
+        ctx.fillStyle = '#4a0e4e';
+        ctx.fillRect(-16, -2, 10, 4); // Left arm
+        ctx.fillRect(6, -2, 10, 4);   // Right arm
+        
+        // Hands (larger)
+        ctx.fillStyle = '#6b8e23';
+        ctx.beginPath();
+        ctx.arc(-16, 0, 3, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(16, 0, 3, 0, Math.PI * 2);
+        ctx.fill();
+        
+        ctx.restore();
         
         // Health bar
         const healthPercent = boss.health / (300 + game.level * 50);
