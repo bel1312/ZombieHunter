@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Zombie Shooter</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: #000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            font-family: Arial, sans-serif;
+        }
+        canvas {
+            border: 2px solid #333;
+            background: #1a1a1a;
+        }
+        .ui {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: white;
+            font-size: 16px;
+        }
+        .controls {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            color: white;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    <div class="ui">
+        <div>Level: <span id="level">1</span></div>
+        <div>Score: <span id="score">0</span></div>
+        <div>Health: <span id="health">100</span></div>
+        <div>Weapon: <span id="weapon">Pistol</span></div>
+        <div>Ammo: <span id="ammo">∞</span></div>
+    </div>
+    <div class="controls">
+        WASD: Move | Mouse: Aim & Shoot | 1-5: Switch Weapons
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // Game state
+        const game = {
+            player: { x: 400, y: 300, health: 100, angle: 0, speed: 3 },
+            bullets: [],
+            zombies: [],
+            bosses: [],
+            particles: [],
+            level: 1,
+            score: 0,
+            zombiesKilled: 0,
+            currentWeapon: 0,
+            lastShot: 0,
+            keys: {},
+            mouse: { x: 0, y: 0, down: false },
+            gameTime: 0,
+            nextBoss: 50
+        };
+
+        // Weapons system
+        const weapons = [
+            { name: 'Pistol', damage: 25, fireRate: 300, ammo: Infinity, unlockLevel: 1 },
+            { name: 'Shotgun', damage: 15, fireRate: 600, ammo: Infinity, unlockLevel: 2, spread: 5 },
+            { name: 'SMG', damage: 20, fireRate: 100, ammo: Infinity, unlockLevel: 3 },
+            { name: 'Rifle', damage: 50, fireRate: 800, ammo: Infinity, unlockLevel: 5 },
+            { name: 'Rocket', damage: 100, fireRate: 1000, ammo: Infinity, unlockLevel: 8, explosive: true }
+        ];
+
+        // Input handling
+        document.addEventListener('keydown', (e) => game.keys[e.key.toLowerCase()] = true);
+        document.addEventListener('keyup', (e) => game.keys[e.key.toLowerCase()] = false);
+        document.addEventListener('mousemove', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            game.mouse.x = e.clientX - rect.left;
+            game.mouse.y = e.clientY - rect.top;
+        });
+        document.addEventListener('mousedown', () => game.mouse.down = true);
+        document.addEventListener('mouseup', () => game.mouse.down = false);
+        document.addEventListener('keydown', (e) => {
+            const num = parseInt(e.key);
+            if (num >= 1 && num <= 5 && weapons[num-1].unlockLevel <= game.level) {
+                game.currentWeapon = num - 1;
+            }
+        });
+
+        function spawnZombie() {
+            const side = Math.floor(Math.random() * 4);
+            let x, y;
+            
+            switch(side) {
+                case 0: x = Math.random() * canvas.width; y = -20; break;
+                case 1: x = canvas.width + 20; y = Math.random() * canvas.height; break;
+                case 2: x = Math.random() * canvas.width; y = canvas.height + 20; break;
+                case 3: x = -20; y = Math.random() * canvas.height; break;
+            }
+            
+            game.zombies.push({
+                x, y, health: 50 + game.level * 10, speed: 0.5 + game.level * 0.1,
+                size: 15, type: 'normal'
+            });
+        }
+
+        function spawnBoss() {
+            const side = Math.floor(Math.random() * 4);
+            let x, y;
+            
+            switch(side) {
+                case 0: x = Math.random() * canvas.width; y = -30; break;
+                case 1: x = canvas.width + 30; y = Math.random() * canvas.height; break;
+                case 2: x = Math.random() * canvas.width; y = canvas.height + 30; break;
+                case 3: x = -30; y = Math.random() * canvas.height; break;
+            }
+            
+            game.bosses.push({
+                x, y, health: 300 + game.level * 50, speed: 0.3 + game.level * 0.05,
+                size: 30, type: 'boss', lastAttack: 0
+            });
+        }
+
+        function updatePlayer() {
+            // Movement
+            if (game.keys['w']) game.player.y -= game.player.speed;
+            if (game.keys['s']) game.player.y += game.player.speed;
+            if (game.keys['a']) game.player.x -= game.player.speed;
+            if (game.keys['d']) game.player.x += game.player.speed;
+
+            // Boundaries
+            game.player.x = Math.max(15, Math.min(canvas.width - 15, game.player.x));
+            game.player.y = Math.max(15, Math.min(canvas.height - 15, game.player.y));
+
+            // Aim
+            game.player.angle = Math.atan2(game.mouse.y - game.player.y, game.mouse.x - game.player.x);
+
+            // Shooting
+            if (game.mouse.down && Date.now() - game.lastShot > weapons[game.currentWeapon].fireRate) {
+                shoot();
+                game.lastShot = Date.now();
+            }
+        }
+
+        function shoot() {
+            const weapon = weapons[game.currentWeapon];
+            const bullets = weapon.spread ? weapon.spread : 1;
+            
+            for (let i = 0; i < bullets; i++) {
+                const spreadAngle = weapon.spread ? (i - Math.floor(bullets/2)) * 0.2 : 0;
+                const angle = game.player.angle + spreadAngle;
+                
+                game.bullets.push({
+                    x: game.player.x,
+                    y: game.player.y,
+                    vx: Math.cos(angle) * 8,
+                    vy: Math.sin(angle) * 8,
+                    damage: weapon.damage,
+                    explosive: weapon.explosive || false
+                });
+            }
+        }
+
+        function updateBullets() {
+            game.bullets = game.bullets.filter(bullet => {
+                bullet.x += bullet.vx;
+                bullet.y += bullet.vy;
+                
+                // Remove if out of bounds
+                if (bullet.x < 0 || bullet.x > canvas.width || bullet.y < 0 || bullet.y > canvas.height) {
+                    return false;
+                }
+                
+                // Check zombie collisions
+                for (let i = game.zombies.length - 1; i >= 0; i--) {
+                    const zombie = game.zombies[i];
+                    const dist = Math.hypot(bullet.x - zombie.x, bullet.y - zombie.y);
+                    
+                    if (dist < zombie.size) {
+                        zombie.health -= bullet.damage;
+                        
+                        if (bullet.explosive) {
+                            // Explosive damage to nearby zombies
+                            game.zombies.forEach(z => {
+                                const explosionDist = Math.hypot(bullet.x - z.x, bullet.y - z.y);
+                                if (explosionDist < 50) {
+                                    z.health -= bullet.damage * 0.5;
+                                }
+                            });
+                            createExplosion(bullet.x, bullet.y);
+                        }
+                        
+                        if (zombie.health <= 0) {
+                            game.zombies.splice(i, 1);
+                            game.score += 10;
+                            game.zombiesKilled++;
+                        }
+                        return false;
+                    }
+                }
+                
+                // Check boss collisions
+                for (let i = game.bosses.length - 1; i >= 0; i--) {
+                    const boss = game.bosses[i];
+                    const dist = Math.hypot(bullet.x - boss.x, bullet.y - boss.y);
+                    
+                    if (dist < boss.size) {
+                        boss.health -= bullet.damage;
+                        
+                        if (bullet.explosive) {
+                            createExplosion(bullet.x, bullet.y);
+                        }
+                        
+                        if (boss.health <= 0) {
+                            game.bosses.splice(i, 1);
+                            game.score += 100;
+                            game.zombiesKilled += 10;
+                        }
+                        return false;
+                    }
+                }
+                
+                return true;
+            });
+        }
+
+        function updateZombies() {
+            game.zombies.forEach(zombie => {
+                // Move towards player
+                const dx = game.player.x - zombie.x;
+                const dy = game.player.y - zombie.y;
+                const dist = Math.hypot(dx, dy);
+                
+                if (dist > 0) {
+                    zombie.x += (dx / dist) * zombie.speed;
+                    zombie.y += (dy / dist) * zombie.speed;
+                }
+                
+                // Damage player on contact
+                if (dist < zombie.size + 15) {
+                    game.player.health -= 0.5;
+                }
+            });
+        }
+
+        function updateBosses() {
+            game.bosses.forEach(boss => {
+                // Move towards player
+                const dx = game.player.x - boss.x;
+                const dy = game.player.y - boss.y;
+                const dist = Math.hypot(dx, dy);
+                
+                if (dist > 0) {
+                    boss.x += (dx / dist) * boss.speed;
+                    boss.y += (dy / dist) * boss.speed;
+                }
+                
+                // Damage player on contact
+                if (dist < boss.size + 15) {
+                    game.player.health -= 1;
+                }
+                
+                // Boss special attack
+                if (Date.now() - boss.lastAttack > 2000 && dist < 200) {
+                    // Spawn mini zombies around boss
+                    for (let i = 0; i < 3; i++) {
+                        const angle = (Math.PI * 2 / 3) * i;
+                        game.zombies.push({
+                            x: boss.x + Math.cos(angle) * 40,
+                            y: boss.y + Math.sin(angle) * 40,
+                            health: 30,
+                            speed: 1,
+                            size: 10,
+                            type: 'mini'
+                        });
+                    }
+                    boss.lastAttack = Date.now();
+                }
+            });
+        }
+
+        function createExplosion(x, y) {
+            for (let i = 0; i < 10; i++) {
+                game.particles.push({
+                    x, y,
+                    vx: (Math.random() - 0.5) * 10,
+                    vy: (Math.random() - 0.5) * 10,
+                    life: 30,
+                    color: `hsl(${Math.random() * 60 + 10}, 100%, 50%)`
+                });
+            }
+        }
+
+        function updateParticles() {
+            game.particles = game.particles.filter(particle => {
+                particle.x += particle.vx;
+                particle.y += particle.vy;
+                particle.vx *= 0.95;
+                particle.vy *= 0.95;
+                particle.life--;
+                return particle.life > 0;
+            });
+        }
+
+        function updateGame() {
+            game.gameTime++;
+            
+            // Spawn zombies
+            if (Math.random() < 0.02 + game.level * 0.005) {
+                spawnZombie();
+            }
+            
+            // Spawn boss
+            if (game.zombiesKilled >= game.nextBoss) {
+                spawnBoss();
+                game.nextBoss += 50 + game.level * 10;
+            }
+            
+            // Level progression
+            if (game.zombiesKilled >= game.level * 20) {
+                game.level++;
+                game.player.health = Math.min(100, game.player.health + 25);
+            }
+            
+            // Game over
+            if (game.player.health <= 0) {
+                alert(`Game Over! Final Score: ${game.score}`);
+                location.reload();
+            }
+        }
+
+        function render() {
+            // Clear canvas
+            ctx.fillStyle = '#1a1a1a';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw player
+            ctx.save();
+            ctx.translate(game.player.x, game.player.y);
+            ctx.rotate(game.player.angle);
+            ctx.fillStyle = '#00ff00';
+            ctx.fillRect(-10, -5, 20, 10);
+            ctx.fillStyle = '#008800';
+            ctx.fillRect(10, -2, 8, 4);
+            ctx.restore();
+            
+            // Draw bullets
+            ctx.fillStyle = '#ffff00';
+            game.bullets.forEach(bullet => {
+                ctx.fillRect(bullet.x - 2, bullet.y - 2, 4, 4);
+            });
+            
+            // Draw zombies
+            game.zombies.forEach(zombie => {
+                ctx.fillStyle = zombie.type === 'mini' ? '#ff6666' : '#ff0000';
+                ctx.fillRect(zombie.x - zombie.size/2, zombie.y - zombie.size/2, zombie.size, zombie.size);
+                
+                // Health bar
+                if (zombie.health < (50 + game.level * 10)) {
+                    const healthPercent = zombie.health / (50 + game.level * 10);
+                    ctx.fillStyle = '#333';
+                    ctx.fillRect(zombie.x - zombie.size/2, zombie.y - zombie.size/2 - 8, zombie.size, 3);
+                    ctx.fillStyle = '#ff0000';
+                    ctx.fillRect(zombie.x - zombie.size/2, zombie.y - zombie.size/2 - 8, zombie.size * healthPercent, 3);
+                }
+            });
+            
+            // Draw bosses
+            game.bosses.forEach(boss => {
+                ctx.fillStyle = '#800080';
+                ctx.fillRect(boss.x - boss.size/2, boss.y - boss.size/2, boss.size, boss.size);
+                
+                // Health bar
+                const healthPercent = boss.health / (300 + game.level * 50);
+                ctx.fillStyle = '#333';
+                ctx.fillRect(boss.x - boss.size/2, boss.y - boss.size/2 - 10, boss.size, 5);
+                ctx.fillStyle = '#ff0000';
+                ctx.fillRect(boss.x - boss.size/2, boss.y - boss.size/2 - 10, boss.size * healthPercent, 5);
+            });
+            
+            // Draw particles
+            game.particles.forEach(particle => {
+                ctx.fillStyle = particle.color;
+                ctx.globalAlpha = particle.life / 30;
+                ctx.fillRect(particle.x - 2, particle.y - 2, 4, 4);
+                ctx.globalAlpha = 1;
+            });
+            
+            // Update UI
+            document.getElementById('level').textContent = game.level;
+            document.getElementById('score').textContent = game.score;
+            document.getElementById('health').textContent = Math.max(0, Math.floor(game.player.health));
+            document.getElementById('weapon').textContent = weapons[game.currentWeapon].name;
+            document.getElementById('ammo').textContent = weapons[game.currentWeapon].ammo === Infinity ? '∞' : weapons[game.currentWeapon].ammo;
+        }
+
+        function gameLoop() {
+            updatePlayer();
+            updateBullets();
+            updateZombies();
+            updateBosses();
+            updateParticles();
+            updateGame();
+            render();
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Start game
+        gameLoop();
+    </script>
+</body>
+</html>
