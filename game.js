@@ -10,12 +10,12 @@ const game = {
     particles: [],
     bloodSplats: [],
     pillars: [
-        {x: 150, y: 100, radius: 25},
-        {x: 600, y: 150, radius: 25},
-        {x: 200, y: 400, radius: 25},
-        {x: 550, y: 450, radius: 25},
-        {x: 350, y: 200, radius: 25},
-        {x: 100, y: 350, radius: 25}
+        {x: 150, y: 100, radius: 25, type: 'standing', broken: false},
+        {x: 600, y: 150, radius: 20, type: 'lying', broken: true},
+        {x: 200, y: 400, radius: 25, type: 'standing', broken: false},
+        {x: 550, y: 450, radius: 15, type: 'half', broken: true},
+        {x: 350, y: 200, radius: 25, type: 'standing', broken: false},
+        {x: 100, y: 350, radius: 18, type: 'lying', broken: false}
     ],
     level: 1,
     score: 0,
@@ -31,9 +31,10 @@ const game = {
 // Weapons system
 const weapons = [
     { name: 'Pistol', damage: 25, fireRate: 300, ammo: Infinity, unlockLevel: 1 },
-    { name: 'Shotgun', damage: 15, fireRate: 600, ammo: Infinity, unlockLevel: 2, spread: 5 },
-    { name: 'SMG', damage: 20, fireRate: 100, ammo: Infinity, unlockLevel: 3 },
-    { name: 'Rifle', damage: 50, fireRate: 800, ammo: Infinity, unlockLevel: 5 },
+    { name: 'Uzi', damage: 15, fireRate: 80, ammo: Infinity, unlockLevel: 2 },
+    { name: 'Shotgun', damage: 20, fireRate: 600, ammo: Infinity, unlockLevel: 3, spread: 3 },
+    { name: 'SMG', damage: 20, fireRate: 100, ammo: Infinity, unlockLevel: 4 },
+    { name: 'Rifle', damage: 50, fireRate: 800, ammo: Infinity, unlockLevel: 6 },
     { name: 'Rocket', damage: 100, fireRate: 1000, ammo: Infinity, unlockLevel: 8, explosive: true }
 ];
 
@@ -49,7 +50,7 @@ document.addEventListener('mousedown', () => game.mouse.down = true);
 document.addEventListener('mouseup', () => game.mouse.down = false);
 document.addEventListener('keydown', (e) => {
     const num = parseInt(e.key);
-    if (num >= 1 && num <= 5 && weapons[num-1].unlockLevel <= game.level) {
+    if (num >= 1 && num <= 6 && weapons[num-1].unlockLevel <= game.level) {
         game.currentWeapon = num - 1;
     }
 });
@@ -125,11 +126,25 @@ function updatePlayer() {
 
 function shoot() {
     const weapon = weapons[game.currentWeapon];
-    const bullets = weapon.spread ? weapon.spread : 1;
     
-    for (let i = 0; i < bullets; i++) {
-        const spreadAngle = weapon.spread ? (i - Math.floor(bullets/2)) * 0.2 : 0;
-        const angle = game.player.angle + spreadAngle;
+    if (weapon.name === 'Shotgun') {
+        // Shotgun fires 3 pellets in spread
+        for (let i = 0; i < 3; i++) {
+            const spreadAngle = (i - 1) * 0.3; // Wider spread
+            const angle = game.player.angle + spreadAngle;
+            
+            game.bullets.push({
+                x: game.player.x,
+                y: game.player.y,
+                vx: Math.cos(angle) * 8,
+                vy: Math.sin(angle) * 8,
+                damage: weapon.damage,
+                explosive: weapon.explosive || false
+            });
+        }
+    } else {
+        // Regular single shot
+        const angle = game.player.angle;
         
         game.bullets.push({
             x: game.player.x,
@@ -371,11 +386,7 @@ function updateParticles() {
         return particle.life > 0;
     });
     
-    // Fade blood splats over time
-    game.bloodSplats = game.bloodSplats.filter(splat => {
-        splat.alpha -= 0.002;
-        return splat.alpha > 0;
-    });
+    // Blood splats persist (no fading)
 }
 
 function updateGame() {
@@ -410,25 +421,79 @@ function render() {
     ctx.fillStyle = '#6b6b6b';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     
-    // Draw pillars (cylindrical)
+    // Draw pillars (varied types)
     game.pillars.forEach(pillar => {
-        // Shadow
-        ctx.fillStyle = '#3a3a3a';
-        ctx.beginPath();
-        ctx.arc(pillar.x + 2, pillar.y + 2, pillar.radius, 0, Math.PI * 2);
-        ctx.fill();
+        ctx.save();
+        ctx.translate(pillar.x, pillar.y);
         
-        // Main pillar
-        ctx.fillStyle = '#5a5a5a';
-        ctx.beginPath();
-        ctx.arc(pillar.x, pillar.y, pillar.radius, 0, Math.PI * 2);
-        ctx.fill();
+        if (pillar.type === 'lying') {
+            // Lying pillar (oval)
+            ctx.fillStyle = '#3a3a3a';
+            ctx.scale(2.5, 1);
+            ctx.beginPath();
+            ctx.arc(1, 1, pillar.radius * 0.6, 0, Math.PI * 2);
+            ctx.fill();
+            
+            ctx.fillStyle = pillar.broken ? '#4a4a4a' : '#5a5a5a';
+            ctx.beginPath();
+            ctx.arc(0, 0, pillar.radius * 0.6, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Texture lines
+            ctx.strokeStyle = '#3a3a3a';
+            ctx.lineWidth = 1;
+            for (let i = -pillar.radius; i < pillar.radius; i += 4) {
+                ctx.beginPath();
+                ctx.moveTo(i, -pillar.radius * 0.6);
+                ctx.lineTo(i, pillar.radius * 0.6);
+                ctx.stroke();
+            }
+        } else if (pillar.type === 'half') {
+            // Half broken pillar
+            ctx.fillStyle = '#3a3a3a';
+            ctx.beginPath();
+            ctx.arc(1, 1, pillar.radius, 0, Math.PI);
+            ctx.fill();
+            
+            ctx.fillStyle = '#4a4a4a';
+            ctx.beginPath();
+            ctx.arc(0, 0, pillar.radius, 0, Math.PI);
+            ctx.fill();
+            
+            // Broken edge
+            ctx.fillStyle = '#3a3a3a';
+            ctx.fillRect(-pillar.radius, -2, pillar.radius * 2, 4);
+        } else {
+            // Standing pillar (circle)
+            ctx.fillStyle = '#3a3a3a';
+            ctx.beginPath();
+            ctx.arc(1, 1, pillar.radius, 0, Math.PI * 2);
+            ctx.fill();
+            
+            ctx.fillStyle = pillar.broken ? '#4a4a4a' : '#5a5a5a';
+            ctx.beginPath();
+            ctx.arc(0, 0, pillar.radius, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // 3D highlight
+            ctx.fillStyle = pillar.broken ? '#6a6a6a' : '#7a7a7a';
+            ctx.beginPath();
+            ctx.arc(-3, -3, pillar.radius * 0.7, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Stone texture
+            ctx.fillStyle = '#3a3a3a';
+            for (let i = 0; i < 3; i++) {
+                const angle = (i * Math.PI * 2) / 3;
+                const x = Math.cos(angle) * pillar.radius * 0.5;
+                const y = Math.sin(angle) * pillar.radius * 0.5;
+                ctx.beginPath();
+                ctx.arc(x, y, 2, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        }
         
-        // 3D highlight
-        ctx.fillStyle = '#7a7a7a';
-        ctx.beginPath();
-        ctx.arc(pillar.x - 3, pillar.y - 3, pillar.radius * 0.7, 0, Math.PI * 2);
-        ctx.fill();
+        ctx.restore();
     });
     
     // Draw blood splats
