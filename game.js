@@ -3,7 +3,7 @@ const ctx = canvas.getContext('2d');
 
 // Game state
 const game = {
-    player: { x: 400, y: 300, health: 100, angle: 0, speed: 3 },
+    player: { x: 400, y: 300, health: 100, angle: 0, speed: 1.5, facingDirection: 0, directionUpdateTimer: 0 },
     bullets: [],
     zombies: [],
     bosses: [],
@@ -39,20 +39,22 @@ const weapons = [
 ];
 
 // Input handling
-document.addEventListener('keydown', (e) => game.keys[e.key.toLowerCase()] = true);
-document.addEventListener('keyup', (e) => game.keys[e.key.toLowerCase()] = false);
-document.addEventListener('mousemove', (e) => {
-    const rect = canvas.getBoundingClientRect();
-    game.mouse.x = e.clientX - rect.left;
-    game.mouse.y = e.clientY - rect.top;
-});
-document.addEventListener('mousedown', () => game.mouse.down = true);
-document.addEventListener('mouseup', () => game.mouse.down = false);
 document.addEventListener('keydown', (e) => {
+    game.keys[e.key.toLowerCase()] = true;
+    
     const num = parseInt(e.key);
     if (num >= 1 && num <= 6 && weapons[num-1].unlockLevel <= game.level) {
         game.currentWeapon = num - 1;
     }
+});
+document.addEventListener('keyup', (e) => game.keys[e.key.toLowerCase()] = false);
+
+// Fix alt-tab issue by clearing keys on focus loss/gain
+window.addEventListener('blur', () => {
+    game.keys = {};
+});
+window.addEventListener('focus', () => {
+    game.keys = {};
 });
 
 function spawnZombie() {
@@ -67,7 +69,7 @@ function spawnZombie() {
     }
     
     game.zombies.push({
-        x, y, health: 50 + game.level * 10, speed: 0.3 + game.level * 0.05,
+        x, y, health: 50 + game.level * 10, speed: 0.15 + game.level * 0.025,
         size: 15, type: 'normal'
     });
 }
@@ -84,7 +86,7 @@ function spawnBoss() {
     }
     
     game.bosses.push({
-        x, y, health: 300 + game.level * 50, speed: 0.2 + game.level * 0.03,
+        x, y, health: 300 + game.level * 50, speed: 0.1 + game.level * 0.015,
         size: 30, type: 'boss', lastAttack: 0
     });
 }
@@ -94,11 +96,41 @@ function updatePlayer() {
     const oldX = game.player.x;
     const oldY = game.player.y;
     
-    // Movement
-    if (game.keys['w']) game.player.y -= game.player.speed;
-    if (game.keys['s']) game.player.y += game.player.speed;
-    if (game.keys['a']) game.player.x -= game.player.speed;
-    if (game.keys['d']) game.player.x += game.player.speed;
+    let dx = 0, dy = 0;
+    
+    // Simple direction calculation
+    if (game.keys['w']) dy = -1;
+    if (game.keys['s']) dy = 1;
+    if (game.keys['a']) dx = -1;
+    if (game.keys['d']) dx = 1;
+    
+    // Update facing direction with small delay to catch simultaneous keys
+    if (dx !== 0 || dy !== 0) {
+        if (game.player.directionUpdateTimer <= 0) {
+            game.player.facingDirection = Math.atan2(dy, dx);
+            game.player.directionUpdateTimer = 3; // 3 frame delay
+        }
+    } else {
+        game.player.directionUpdateTimer = 0;
+    }
+    
+    if (game.player.directionUpdateTimer > 0) {
+        game.player.directionUpdateTimer--;
+    }
+    
+    // Always use the stored facing direction
+    game.player.angle = game.player.facingDirection;
+    
+    // Move if keys are pressed
+    if (dx !== 0 || dy !== 0) {
+        // Normalize for consistent speed
+        const length = Math.hypot(dx, dy);
+        dx /= length;
+        dy /= length;
+        
+        game.player.x += dx * game.player.speed;
+        game.player.y += dy * game.player.speed;
+    }
 
     // Check pillar collisions
     for (const pillar of game.pillars) {
@@ -114,11 +146,8 @@ function updatePlayer() {
     game.player.x = Math.max(15, Math.min(canvas.width - 15, game.player.x));
     game.player.y = Math.max(15, Math.min(canvas.height - 15, game.player.y));
 
-    // Aim
-    game.player.angle = Math.atan2(game.mouse.y - game.player.y, game.mouse.x - game.player.x);
-
     // Shooting
-    if (game.mouse.down && Date.now() - game.lastShot > weapons[game.currentWeapon].fireRate) {
+    if (game.keys[' '] && Date.now() - game.lastShot > weapons[game.currentWeapon].fireRate) {
         shoot();
         game.lastShot = Date.now();
     }
@@ -333,7 +362,7 @@ function updateBosses() {
                     x: boss.x + Math.cos(angle) * 40,
                     y: boss.y + Math.sin(angle) * 40,
                     health: 30,
-                    speed: 0.6,
+                    speed: 0.3,
                     size: 10,
                     type: 'mini'
                 });
