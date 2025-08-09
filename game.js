@@ -17,25 +17,23 @@ const game = {
         {x: 350, y: 200, radius: 25, type: 'standing', broken: false},
         {x: 100, y: 350, radius: 18, type: 'lying', broken: false}
     ],
-    level: 1,
+    wave: 1,
     score: 0,
     zombiesKilled: 0,
     currentWeapon: 0,
     lastShot: 0,
     keys: {},
-    mouse: { x: 0, y: 0, down: false },
-    gameTime: 0,
-    nextBoss: 50
+    waveZombiesSpawned: 0,
+    waveZombiesKilled: 0,
+    waveActive: false,
+    waveDelay: 0
 };
 
 // Weapons system
 const weapons = [
-    { name: 'Pistol', damage: 25, fireRate: 300, ammo: Infinity, unlockLevel: 1 },
-    { name: 'Uzi', damage: 15, fireRate: 80, ammo: Infinity, unlockLevel: 2 },
-    { name: 'Shotgun', damage: 20, fireRate: 600, ammo: Infinity, unlockLevel: 3, spread: 3 },
-    { name: 'SMG', damage: 20, fireRate: 100, ammo: Infinity, unlockLevel: 4 },
-    { name: 'Rifle', damage: 50, fireRate: 800, ammo: Infinity, unlockLevel: 6 },
-    { name: 'Rocket', damage: 100, fireRate: 1000, ammo: Infinity, unlockLevel: 8, explosive: true }
+    { name: 'Pistol', damage: 25, fireRate: 300, ammo: Infinity, unlockWave: 1 },
+    { name: 'Uzi', damage: 15, fireRate: 80, ammo: Infinity, unlockWave: 2 },
+    { name: 'Shotgun', damage: 20, fireRate: 600, ammo: Infinity, unlockWave: 4, spread: 3 }
 ];
 
 // Input handling
@@ -43,7 +41,7 @@ document.addEventListener('keydown', (e) => {
     game.keys[e.key.toLowerCase()] = true;
     
     const num = parseInt(e.key);
-    if (num >= 1 && num <= 6 && weapons[num-1].unlockLevel <= game.level) {
+    if (num >= 1 && num <= 3 && weapons[num-1].unlockWave <= game.wave) {
         game.currentWeapon = num - 1;
     }
 });
@@ -69,9 +67,17 @@ function spawnZombie() {
     }
     
     game.zombies.push({
-        x, y, health: 50 + game.level * 10, speed: 0.15 + game.level * 0.025,
-        size: 15, type: 'normal'
+        x, y, 
+        health: 30 + game.wave * 15, 
+        speed: 0.1 + game.wave * 0.02,
+        size: 15, 
+        type: 'normal',
+        hitFlash: 0,
+        pushbackX: 0,
+        pushbackY: 0
     });
+    
+    game.waveZombiesSpawned++;
 }
 
 function spawnBoss() {
@@ -212,16 +218,12 @@ function updateBullets() {
             if (dist < zombie.size) {
                 zombie.health -= bullet.damage;
                 
-                if (bullet.explosive) {
-                    // Explosive damage to nearby zombies
-                    game.zombies.forEach(z => {
-                        const explosionDist = Math.hypot(bullet.x - z.x, bullet.y - z.y);
-                        if (explosionDist < 50) {
-                            z.health -= bullet.damage * 0.5;
-                        }
-                    });
-                    createExplosion(bullet.x, bullet.y);
-                }
+                // Hit effects
+                zombie.hitFlash = 10;
+                const pushForce = 3;
+                const pushAngle = Math.atan2(zombie.y - bullet.y, zombie.x - bullet.x);
+                zombie.pushbackX = Math.cos(pushAngle) * pushForce;
+                zombie.pushbackY = Math.sin(pushAngle) * pushForce;
                 
                 // Blood splash effect
                 createBloodSplash(zombie.x, zombie.y);
@@ -230,6 +232,7 @@ function updateBullets() {
                     game.zombies.splice(i, 1);
                     game.score += 10;
                     game.zombiesKilled++;
+                    game.waveZombiesKilled++;
                 }
                 return false;
             }
@@ -243,9 +246,9 @@ function updateBullets() {
             if (dist < boss.size) {
                 boss.health -= bullet.damage;
                 
-                if (bullet.explosive) {
-                    createExplosion(bullet.x, bullet.y);
-                }
+                // Hit effects for boss
+                if (!boss.hitFlash) boss.hitFlash = 0;
+                boss.hitFlash = 10;
                 
                 // Blood splash effect
                 createBloodSplash(boss.x, boss.y);
@@ -265,6 +268,19 @@ function updateBullets() {
 
 function updateZombies() {
     game.zombies.forEach(zombie => {
+        // Apply pushback
+        if (zombie.pushbackX !== 0 || zombie.pushbackY !== 0) {
+            zombie.x += zombie.pushbackX;
+            zombie.y += zombie.pushbackY;
+            zombie.pushbackX *= 0.8;
+            zombie.pushbackY *= 0.8;
+            if (Math.abs(zombie.pushbackX) < 0.1) zombie.pushbackX = 0;
+            if (Math.abs(zombie.pushbackY) < 0.1) zombie.pushbackY = 0;
+        }
+        
+        // Reduce hit flash
+        if (zombie.hitFlash > 0) zombie.hitFlash--;
+        
         // Move towards player
         let dx = game.player.x - zombie.x;
         let dy = game.player.y - zombie.y;
@@ -275,15 +291,12 @@ function updateZombies() {
             let blocked = false;
             for (const pillar of game.pillars) {
                 const pillarDist = Math.hypot(zombie.x - pillar.x, zombie.y - pillar.y);
-                if (pillarDist < pillar.radius + 30) { // Detection range
+                if (pillarDist < pillar.radius + 30) {
                     blocked = true;
-                    // Calculate direction to go around pillar
                     const pillarDx = pillar.x - zombie.x;
                     const pillarDy = pillar.y - zombie.y;
-                    // Go perpendicular to pillar direction
                     dx = -pillarDy;
                     dy = pillarDx;
-                    // Normalize
                     const perpDist = Math.hypot(dx, dy);
                     if (perpDist > 0) {
                         dx /= perpDist;
@@ -311,25 +324,24 @@ function updateZombies() {
 
 function updateBosses() {
     game.bosses.forEach(boss => {
+        // Reduce hit flash
+        if (boss.hitFlash > 0) boss.hitFlash--;
+        
         // Move towards player
         let dx = game.player.x - boss.x;
         let dy = game.player.y - boss.y;
         const dist = Math.hypot(dx, dy);
         
         if (dist > 0) {
-            // Check for pillar in the way
             let blocked = false;
             for (const pillar of game.pillars) {
                 const pillarDist = Math.hypot(boss.x - pillar.x, boss.y - pillar.y);
-                if (pillarDist < pillar.radius + 40) { // Detection range
+                if (pillarDist < pillar.radius + 40) {
                     blocked = true;
-                    // Calculate direction to go around pillar
                     const pillarDx = pillar.x - boss.x;
                     const pillarDy = pillar.y - boss.y;
-                    // Go perpendicular to pillar direction
                     dx = -pillarDy;
                     dy = pillarDx;
-                    // Normalize
                     const perpDist = Math.hypot(dx, dy);
                     if (perpDist > 0) {
                         dx /= perpDist;
@@ -348,26 +360,8 @@ function updateBosses() {
             boss.y += dy * boss.speed;
         }
         
-        // Damage player on contact
         if (dist < boss.size + 15) {
             game.player.health -= 1;
-        }
-        
-        // Boss special attack
-        if (Date.now() - boss.lastAttack > 2000 && dist < 200) {
-            // Spawn mini zombies around boss
-            for (let i = 0; i < 3; i++) {
-                const angle = (Math.PI * 2 / 3) * i;
-                game.zombies.push({
-                    x: boss.x + Math.cos(angle) * 40,
-                    y: boss.y + Math.sin(angle) * 40,
-                    health: 30,
-                    speed: 0.3,
-                    size: 10,
-                    type: 'mini'
-                });
-            }
-            boss.lastAttack = Date.now();
         }
     });
 }
@@ -419,30 +413,45 @@ function updateParticles() {
 }
 
 function updateGame() {
-    game.gameTime++;
-    
-    // Spawn zombies
-    if (Math.random() < 0.008 + game.level * 0.003) {
-        spawnZombie();
+    // Wave system
+    if (!game.waveActive && game.waveDelay <= 0) {
+        startWave();
     }
     
-    // Spawn boss
-    if (game.zombiesKilled >= game.nextBoss) {
-        spawnBoss();
-        game.nextBoss += 50 + game.level * 10;
+    if (game.waveDelay > 0) {
+        game.waveDelay--;
     }
     
-    // Level progression
-    if (game.zombiesKilled >= game.level * 20) {
-        game.level++;
-        game.player.health = Math.min(100, game.player.health + 25);
+    // Check if wave is complete
+    if (game.waveActive && game.waveZombiesKilled >= getWaveZombieCount()) {
+        game.waveActive = false;
+        game.wave++;
+        game.waveDelay = 180; // 3 second delay
+        game.waveZombiesSpawned = 0;
+        game.waveZombiesKilled = 0;
+        game.player.health = Math.min(100, game.player.health + 20);
+    }
+    
+    // Spawn zombies during wave
+    if (game.waveActive && game.waveZombiesSpawned < getWaveZombieCount()) {
+        if (Math.random() < 0.02) {
+            spawnZombie();
+        }
     }
     
     // Game over
     if (game.player.health <= 0) {
-        alert(`Game Over! Final Score: ${game.score}`);
+        alert(`Game Over! Wave: ${game.wave}, Score: ${game.score}`);
         location.reload();
     }
+}
+
+function getWaveZombieCount() {
+    return 5 + game.wave * 3;
+}
+
+function startWave() {
+    game.waveActive = true;
 }
 
 function render() {
@@ -579,6 +588,14 @@ function render() {
         ctx.save();
         ctx.translate(zombie.x, zombie.y);
         
+        // Hit flash effect
+        if (zombie.hitFlash > 0) {
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
+            ctx.beginPath();
+            ctx.arc(0, 0, zombie.size + 2, 0, Math.PI * 2);
+            ctx.fill();
+        }
+        
         // Body (shoulders/torso)
         ctx.fillStyle = zombie.type === 'mini' ? '#8b4513' : '#654321';
         ctx.fillRect(-6, -3, 12, 6);
@@ -611,6 +628,14 @@ function render() {
         ctx.save();
         ctx.translate(boss.x, boss.y);
         
+        // Hit flash effect
+        if (boss.hitFlash > 0) {
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
+            ctx.beginPath();
+            ctx.arc(0, 0, boss.size + 2, 0, Math.PI * 2);
+            ctx.fill();
+        }
+        
         // Body (larger shoulders/torso)
         ctx.fillStyle = '#4a0e4e';
         ctx.fillRect(-12, -6, 24, 12);
@@ -638,7 +663,7 @@ function render() {
         ctx.restore();
         
         // Health bar
-        const healthPercent = boss.health / (300 + game.level * 50);
+        const healthPercent = boss.health / (300 + game.wave * 50);
         ctx.fillStyle = '#333';
         ctx.fillRect(boss.x - boss.size/2, boss.y - boss.size/2 - 10, boss.size, 5);
         ctx.fillStyle = '#ff0000';
@@ -653,8 +678,21 @@ function render() {
         ctx.globalAlpha = 1;
     });
     
+    // Wave status
+    if (!game.waveActive && game.waveDelay > 0) {
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = 'white';
+        ctx.font = '48px Arial';
+        ctx.textAlign = 'center';
+        ctx.fillText(`Wave ${game.wave}`, canvas.width/2, canvas.height/2 - 20);
+        ctx.font = '24px Arial';
+        ctx.fillText(`Get Ready!`, canvas.width/2, canvas.height/2 + 20);
+        ctx.textAlign = 'left';
+    }
+    
     // Update UI
-    document.getElementById('level').textContent = game.level;
+    document.getElementById('level').textContent = game.wave;
     document.getElementById('score').textContent = game.score;
     document.getElementById('health').textContent = Math.max(0, Math.floor(game.player.health));
     document.getElementById('weapon').textContent = weapons[game.currentWeapon].name;
