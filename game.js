@@ -3,7 +3,7 @@ const ctx = canvas.getContext('2d');
 
 // Game state
 const game = {
-    player: { x: 400, y: 300, health: 100, angle: 0, speed: 1.5, facingDirection: 0, directionUpdateTimer: 0 },
+    player: { x: 400, y: 300, health: 100, angle: 0, speed: 1.5, facingDirection: 0, directionUpdateTimer: 0, walkCycle: 0, isMoving: false },
     bullets: [],
     zombies: [],
     bosses: [],
@@ -26,7 +26,9 @@ const game = {
     waveZombiesSpawned: 0,
     waveZombiesKilled: 0,
     waveActive: false,
-    waveDelay: 0
+    waveDelay: 0,
+    bossPhase: false,
+    bossesSpawned: 0
 };
 
 // Weapons system
@@ -74,7 +76,8 @@ function spawnZombie() {
         type: 'normal',
         hitFlash: 0,
         pushbackX: 0,
-        pushbackY: 0
+        pushbackY: 0,
+        walkCycle: Math.random() * Math.PI * 2
     });
     
     game.waveZombiesSpawned++;
@@ -92,9 +95,16 @@ function spawnBoss() {
     }
     
     game.bosses.push({
-        x, y, health: 300 + game.level * 50, speed: 0.1 + game.level * 0.015,
-        size: 30, type: 'boss', lastAttack: 0
+        x, y, 
+        health: 200 + game.wave * 100, 
+        speed: 0.08 + game.wave * 0.01,
+        size: 30, 
+        type: 'boss', 
+        hitFlash: 0,
+        walkCycle: Math.random() * Math.PI * 2
     });
+    
+    game.bossesSpawned++;
 }
 
 function updatePlayer() {
@@ -129,6 +139,9 @@ function updatePlayer() {
     
     // Move if keys are pressed
     if (dx !== 0 || dy !== 0) {
+        game.player.isMoving = true;
+        game.player.walkCycle += 0.3;
+        
         // Normalize for consistent speed
         const length = Math.hypot(dx, dy);
         dx /= length;
@@ -136,6 +149,8 @@ function updatePlayer() {
         
         game.player.x += dx * game.player.speed;
         game.player.y += dy * game.player.speed;
+    } else {
+        game.player.isMoving = false;
     }
 
     // Check pillar collisions
@@ -255,8 +270,7 @@ function updateBullets() {
                 
                 if (boss.health <= 0) {
                     game.bosses.splice(i, 1);
-                    game.score += 100;
-                    game.zombiesKilled += 10;
+                    game.score += 200;
                 }
                 return false;
             }
@@ -280,6 +294,9 @@ function updateZombies() {
         
         // Reduce hit flash
         if (zombie.hitFlash > 0) zombie.hitFlash--;
+        
+        // Update walk cycle
+        zombie.walkCycle += 0.15;
         
         // Move towards player
         let dx = game.player.x - zombie.x;
@@ -327,6 +344,9 @@ function updateBosses() {
         // Reduce hit flash
         if (boss.hitFlash > 0) boss.hitFlash--;
         
+        // Update walk cycle
+        boss.walkCycle += 0.1;
+        
         // Move towards player
         let dx = game.player.x - boss.x;
         let dy = game.player.y - boss.y;
@@ -361,7 +381,7 @@ function updateBosses() {
         }
         
         if (dist < boss.size + 15) {
-            game.player.health -= 1;
+            game.player.health -= 2;
         }
     });
 }
@@ -422,14 +442,28 @@ function updateGame() {
         game.waveDelay--;
     }
     
-    // Check if wave is complete
-    if (game.waveActive && game.waveZombiesKilled >= getWaveZombieCount()) {
+    // Check if zombie phase is complete
+    if (game.waveActive && !game.bossPhase && game.waveZombiesKilled >= getWaveZombieCount()) {
+        game.bossPhase = true;
+        game.bossesSpawned = 0;
+    }
+    
+    // Spawn bosses during boss phase
+    if (game.bossPhase && game.bossesSpawned < game.wave) {
+        if (Math.random() < 0.02) {
+            spawnBoss();
+        }
+    }
+    
+    // Check if wave is complete (all zombies and bosses defeated)
+    if (game.bossPhase && game.bosses.length === 0 && game.bossesSpawned >= game.wave) {
         game.waveActive = false;
+        game.bossPhase = false;
         game.wave++;
         game.waveDelay = 180; // 3 second delay
         game.waveZombiesSpawned = 0;
         game.waveZombiesKilled = 0;
-        game.player.health = Math.min(100, game.player.health + 20);
+        game.player.health = Math.min(100, game.player.health + 30);
     }
     
     // Spawn zombies during wave
@@ -545,6 +579,19 @@ function render() {
     // Draw player
     ctx.save();
     ctx.translate(game.player.x, game.player.y);
+    
+    // Legs (animated when moving)
+    if (game.player.isMoving) {
+        const legOffset = Math.sin(game.player.walkCycle) * 3;
+        ctx.fillStyle = '#2c5aa0';
+        ctx.fillRect(-3 + legOffset, 8, 2, 8);   // Left leg
+        ctx.fillRect(1 - legOffset, 8, 2, 8);    // Right leg
+    } else {
+        ctx.fillStyle = '#2c5aa0';
+        ctx.fillRect(-3, 8, 2, 8);   // Left leg
+        ctx.fillRect(1, 8, 2, 8);    // Right leg
+    }
+    
     ctx.rotate(game.player.angle);
     
     // Body (shoulders/torso)
@@ -557,23 +604,24 @@ function render() {
     ctx.arc(0, 0, 6, 0, Math.PI * 2);
     ctx.fill();
     
-    // Arms
+    // Arms with slight sway when moving
+    const armSway = game.player.isMoving ? Math.sin(game.player.walkCycle * 0.5) * 0.5 : 0;
     ctx.fillStyle = '#4a90e2';
-    ctx.fillRect(-10, -2, 6, 4); // Left arm
-    ctx.fillRect(8, -2, 6, 4);   // Right arm
+    ctx.fillRect(-10, -2 + armSway, 6, 4); // Left arm
+    ctx.fillRect(8, -2 - armSway, 6, 4);   // Right arm
     
     // Hands
     ctx.fillStyle = '#ffdbac';
     ctx.beginPath();
-    ctx.arc(-7, 0, 2, 0, Math.PI * 2); // Left hand
+    ctx.arc(-7, armSway, 2, 0, Math.PI * 2); // Left hand
     ctx.fill();
     ctx.beginPath();
-    ctx.arc(11, 0, 2, 0, Math.PI * 2); // Right hand
+    ctx.arc(11, -armSway, 2, 0, Math.PI * 2); // Right hand
     ctx.fill();
     
     // Gun (held in right hand)
     ctx.fillStyle = '#333';
-    ctx.fillRect(13, -1, 8, 2);
+    ctx.fillRect(13, -1 - armSway, 8, 2);
     
     ctx.restore();
     
@@ -596,28 +644,36 @@ function render() {
             ctx.fill();
         }
         
+        // Animated legs
+        const legOffset = Math.sin(zombie.walkCycle) * 2;
+        ctx.fillStyle = zombie.type === 'mini' ? '#654321' : '#4a4a4a';
+        ctx.fillRect(-2 + legOffset, 6, 2, 6);   // Left leg
+        ctx.fillRect(0 - legOffset, 6, 2, 6);    // Right leg
+        
         // Body (shoulders/torso)
         ctx.fillStyle = zombie.type === 'mini' ? '#8b4513' : '#654321';
         ctx.fillRect(-6, -3, 12, 6);
         
-        // Head
+        // Head with slight bob
+        const headBob = Math.sin(zombie.walkCycle * 2) * 0.5;
         ctx.fillStyle = '#90ee90';
         ctx.beginPath();
-        ctx.arc(0, 0, 5, 0, Math.PI * 2);
+        ctx.arc(0, headBob, 5, 0, Math.PI * 2);
         ctx.fill();
         
-        // Arms extended forward
+        // Arms extended forward with sway
+        const armSway = Math.sin(zombie.walkCycle + Math.PI) * 0.5;
         ctx.fillStyle = zombie.type === 'mini' ? '#8b4513' : '#654321';
-        ctx.fillRect(-8, -1, 6, 2); // Left arm
-        ctx.fillRect(2, -1, 6, 2);  // Right arm
+        ctx.fillRect(-8, -1 + armSway, 6, 2); // Left arm
+        ctx.fillRect(2, -1 - armSway, 6, 2);  // Right arm
         
-        // Hands
+        // Hands with sway
         ctx.fillStyle = '#90ee90';
         ctx.beginPath();
-        ctx.arc(-8, 0, 2, 0, Math.PI * 2);
+        ctx.arc(-8, armSway, 2, 0, Math.PI * 2);
         ctx.fill();
         ctx.beginPath();
-        ctx.arc(8, 0, 2, 0, Math.PI * 2);
+        ctx.arc(8, -armSway, 2, 0, Math.PI * 2);
         ctx.fill();
         
         ctx.restore();
@@ -630,44 +686,52 @@ function render() {
         
         // Hit flash effect
         if (boss.hitFlash > 0) {
-            ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
             ctx.beginPath();
-            ctx.arc(0, 0, boss.size + 2, 0, Math.PI * 2);
+            ctx.arc(0, 0, boss.size + 3, 0, Math.PI * 2);
             ctx.fill();
         }
         
-        // Body (larger shoulders/torso)
-        ctx.fillStyle = '#4a0e4e';
+        // Animated legs (larger)
+        const legOffset = Math.sin(boss.walkCycle) * 3;
+        ctx.fillStyle = '#8b0000';
+        ctx.fillRect(-4 + legOffset, 12, 3, 10);   // Left leg
+        ctx.fillRect(1 - legOffset, 12, 3, 10);    // Right leg
+        
+        // Body (larger shoulders/torso) - RED
+        ctx.fillStyle = '#cc0000';
         ctx.fillRect(-12, -6, 24, 12);
         
-        // Head (larger)
-        ctx.fillStyle = '#6b8e23';
+        // Head (larger) - RED
+        const headBob = Math.sin(boss.walkCycle * 2) * 0.8;
+        ctx.fillStyle = '#ff4444';
         ctx.beginPath();
-        ctx.arc(0, 0, 8, 0, Math.PI * 2);
+        ctx.arc(0, headBob, 8, 0, Math.PI * 2);
         ctx.fill();
         
-        // Arms extended forward (larger)
-        ctx.fillStyle = '#4a0e4e';
-        ctx.fillRect(-16, -2, 10, 4); // Left arm
-        ctx.fillRect(6, -2, 10, 4);   // Right arm
+        // Arms extended forward (larger) with sway
+        const armSway = Math.sin(boss.walkCycle + Math.PI) * 1;
+        ctx.fillStyle = '#cc0000';
+        ctx.fillRect(-16, -2 + armSway, 10, 4); // Left arm
+        ctx.fillRect(6, -2 - armSway, 10, 4);   // Right arm
         
-        // Hands (larger)
-        ctx.fillStyle = '#6b8e23';
+        // Hands (larger) - RED
+        ctx.fillStyle = '#ff4444';
         ctx.beginPath();
-        ctx.arc(-16, 0, 3, 0, Math.PI * 2);
+        ctx.arc(-16, armSway, 3, 0, Math.PI * 2);
         ctx.fill();
         ctx.beginPath();
-        ctx.arc(16, 0, 3, 0, Math.PI * 2);
+        ctx.arc(16, -armSway, 3, 0, Math.PI * 2);
         ctx.fill();
         
         ctx.restore();
         
         // Health bar
-        const healthPercent = boss.health / (300 + game.wave * 50);
+        const healthPercent = boss.health / (200 + game.wave * 100);
         ctx.fillStyle = '#333';
-        ctx.fillRect(boss.x - boss.size/2, boss.y - boss.size/2 - 10, boss.size, 5);
+        ctx.fillRect(boss.x - boss.size/2, boss.y - boss.size/2 - 12, boss.size, 6);
         ctx.fillStyle = '#ff0000';
-        ctx.fillRect(boss.x - boss.size/2, boss.y - boss.size/2 - 10, boss.size * healthPercent, 5);
+        ctx.fillRect(boss.x - boss.size/2, boss.y - boss.size/2 - 12, boss.size * healthPercent, 6);
     });
     
     // Draw particles
@@ -688,6 +752,17 @@ function render() {
         ctx.fillText(`Wave ${game.wave}`, canvas.width/2, canvas.height/2 - 20);
         ctx.font = '24px Arial';
         ctx.fillText(`Get Ready!`, canvas.width/2, canvas.height/2 + 20);
+        ctx.textAlign = 'left';
+    }
+    
+    // Boss phase indicator
+    if (game.bossPhase && game.bosses.length > 0) {
+        ctx.fillStyle = 'rgba(255, 0, 0, 0.3)';
+        ctx.fillRect(0, 0, canvas.width, 30);
+        ctx.fillStyle = 'white';
+        ctx.font = '20px Arial';
+        ctx.textAlign = 'center';
+        ctx.fillText(`BOSS FIGHT - ${game.bosses.length} remaining`, canvas.width/2, 22);
         ctx.textAlign = 'left';
     }
     
