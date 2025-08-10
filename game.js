@@ -3,7 +3,7 @@ const ctx = canvas.getContext('2d');
 
 // Game state
 const game = {
-    player: { x: 400, y: 300, health: 100, angle: 0, speed: 1.5, facingDirection: 0, directionUpdateTimer: 0, walkCycle: 0, isMoving: false },
+    player: { x: 400, y: 300, health: 100, maxHealth: 100, angle: 0, speed: 1.5, facingDirection: 0, directionUpdateTimer: 0, walkCycle: 0, isMoving: false, lastDamageTime: 0 },
     bullets: [],
     zombies: [],
     bosses: [],
@@ -28,7 +28,11 @@ const game = {
     waveActive: false,
     waveDelay: 0,
     bossPhase: false,
-    bossesSpawned: 0
+    bossesSpawned: 0,
+    weaponSwitchText: '',
+    weaponSwitchTimer: 0,
+    unlockText: '',
+    unlockTimer: 0
 };
 
 // Weapons system
@@ -44,7 +48,11 @@ document.addEventListener('keydown', (e) => {
     
     const num = parseInt(e.key);
     if (num >= 1 && num <= 3 && weapons[num-1].unlockWave <= game.wave) {
-        game.currentWeapon = num - 1;
+        if (game.currentWeapon !== num - 1) {
+            game.currentWeapon = num - 1;
+            game.weaponSwitchText = `Switched to ${weapons[game.currentWeapon].name}`;
+            game.weaponSwitchTimer = 120; // 2 seconds
+        }
     }
 });
 document.addEventListener('keyup', (e) => game.keys[e.key.toLowerCase()] = false);
@@ -77,7 +85,8 @@ function spawnZombie() {
         hitFlash: 0,
         pushbackX: 0,
         pushbackY: 0,
-        walkCycle: Math.random() * Math.PI * 2
+        walkCycle: Math.random() * Math.PI * 2,
+        lastAttack: 0
     });
     
     game.waveZombiesSpawned++;
@@ -101,7 +110,10 @@ function spawnBoss() {
         size: 30, 
         type: 'boss', 
         hitFlash: 0,
-        walkCycle: Math.random() * Math.PI * 2
+        walkCycle: Math.random() * Math.PI * 2,
+        pushbackX: 0,
+        pushbackY: 0,
+        lastAttack: 0
     });
     
     game.bossesSpawned++;
@@ -262,8 +274,11 @@ function updateBullets() {
                 boss.health -= bullet.damage;
                 
                 // Hit effects for boss
-                if (!boss.hitFlash) boss.hitFlash = 0;
                 boss.hitFlash = 10;
+                const pushForce = 2;
+                const pushAngle = Math.atan2(boss.y - bullet.y, boss.x - bullet.x);
+                boss.pushbackX = Math.cos(pushAngle) * pushForce;
+                boss.pushbackY = Math.sin(pushAngle) * pushForce;
                 
                 // Blood splash effect
                 createBloodSplash(boss.x, boss.y);
@@ -332,15 +347,27 @@ function updateZombies() {
             zombie.y += dy * zombie.speed;
         }
         
-        // Damage player on contact
-        if (dist < zombie.size + 15) {
-            game.player.health -= 0.5;
+        // Attack player if close enough and attack cooldown is ready
+        if (dist < zombie.size + 15 && Date.now() - zombie.lastAttack > 1500) {
+            game.player.health -= 15;
+            game.player.lastDamageTime = Date.now();
+            zombie.lastAttack = Date.now();
         }
     });
 }
 
 function updateBosses() {
     game.bosses.forEach(boss => {
+        // Apply pushback
+        if (boss.pushbackX !== 0 || boss.pushbackY !== 0) {
+            boss.x += boss.pushbackX;
+            boss.y += boss.pushbackY;
+            boss.pushbackX *= 0.7;
+            boss.pushbackY *= 0.7;
+            if (Math.abs(boss.pushbackX) < 0.1) boss.pushbackX = 0;
+            if (Math.abs(boss.pushbackY) < 0.1) boss.pushbackY = 0;
+        }
+        
         // Reduce hit flash
         if (boss.hitFlash > 0) boss.hitFlash--;
         
@@ -380,8 +407,10 @@ function updateBosses() {
             boss.y += dy * boss.speed;
         }
         
-        if (dist < boss.size + 15) {
-            game.player.health -= 2;
+        if (dist < boss.size + 15 && Date.now() - boss.lastAttack > 1200) {
+            game.player.health -= 25;
+            game.player.lastDamageTime = Date.now();
+            boss.lastAttack = Date.now();
         }
     });
 }
@@ -433,6 +462,18 @@ function updateParticles() {
 }
 
 function updateGame() {
+    // Health regeneration
+    if (game.player.health < game.player.maxHealth && Date.now() - game.player.lastDamageTime > 3000) {
+        game.player.health += 0.2;
+        if (game.player.health > game.player.maxHealth) {
+            game.player.health = game.player.maxHealth;
+        }
+    }
+    
+    // Update timers
+    if (game.weaponSwitchTimer > 0) game.weaponSwitchTimer--;
+    if (game.unlockTimer > 0) game.unlockTimer--;
+    
     // Wave system
     if (!game.waveActive && game.waveDelay <= 0) {
         startWave();
@@ -460,10 +501,20 @@ function updateGame() {
         game.waveActive = false;
         game.bossPhase = false;
         game.wave++;
+        
+        // Check for weapon unlocks
+        if (game.wave === 2) {
+            game.unlockText = 'UZI UNLOCKED! Press 2';
+            game.unlockTimer = 300; // 5 seconds
+        } else if (game.wave === 4) {
+            game.unlockText = 'SHOTGUN UNLOCKED! Press 3';
+            game.unlockTimer = 300; // 5 seconds
+        }
+        
         game.waveDelay = 180; // 3 second delay
         game.waveZombiesSpawned = 0;
         game.waveZombiesKilled = 0;
-        game.player.health = Math.min(100, game.player.health + 30);
+        game.player.health = Math.min(game.player.maxHealth, game.player.health + 30);
     }
     
     // Spawn zombies during wave
@@ -725,13 +776,6 @@ function render() {
         ctx.fill();
         
         ctx.restore();
-        
-        // Health bar
-        const healthPercent = boss.health / (200 + game.wave * 100);
-        ctx.fillStyle = '#333';
-        ctx.fillRect(boss.x - boss.size/2, boss.y - boss.size/2 - 12, boss.size, 6);
-        ctx.fillStyle = '#ff0000';
-        ctx.fillRect(boss.x - boss.size/2, boss.y - boss.size/2 - 12, boss.size * healthPercent, 6);
     });
     
     // Draw particles
@@ -742,16 +786,23 @@ function render() {
         ctx.globalAlpha = 1;
     });
     
-    // Wave status
+    // In-game score display
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+    ctx.fillRect(canvas.width/2 - 60, 10, 120, 30);
+    ctx.fillStyle = 'white';
+    ctx.font = '20px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText(`Score: ${game.score}`, canvas.width/2, 32);
+    ctx.textAlign = 'left';
+    
+    // Wave status (without wave number)
     if (!game.waveActive && game.waveDelay > 0) {
         ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
         ctx.fillRect(0, 0, canvas.width, canvas.height);
         ctx.fillStyle = 'white';
         ctx.font = '48px Arial';
         ctx.textAlign = 'center';
-        ctx.fillText(`Wave ${game.wave}`, canvas.width/2, canvas.height/2 - 20);
-        ctx.font = '24px Arial';
-        ctx.fillText(`Get Ready!`, canvas.width/2, canvas.height/2 + 20);
+        ctx.fillText(`Get Ready!`, canvas.width/2, canvas.height/2);
         ctx.textAlign = 'left';
     }
     
@@ -766,12 +817,39 @@ function render() {
         ctx.textAlign = 'left';
     }
     
+    // Player health bar (only when damaged)
+    if (game.player.health < game.player.maxHealth) {
+        const healthPercent = game.player.health / game.player.maxHealth;
+        ctx.fillStyle = '#333';
+        ctx.fillRect(game.player.x - 25, game.player.y - 25, 50, 6);
+        ctx.fillStyle = healthPercent > 0.3 ? '#00ff00' : '#ff0000';
+        ctx.fillRect(game.player.x - 25, game.player.y - 25, 50 * healthPercent, 6);
+    }
+    
+    // Weapon switch notification
+    if (game.weaponSwitchTimer > 0) {
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+        ctx.fillRect(canvas.width/2 - 100, canvas.height - 60, 200, 30);
+        ctx.fillStyle = 'white';
+        ctx.font = '16px Arial';
+        ctx.textAlign = 'center';
+        ctx.fillText(game.weaponSwitchText, canvas.width/2, canvas.height - 42);
+        ctx.textAlign = 'left';
+    }
+    
+    // Weapon unlock notification
+    if (game.unlockTimer > 0) {
+        ctx.fillStyle = 'rgba(255, 215, 0, 0.9)';
+        ctx.fillRect(canvas.width/2 - 120, canvas.height/2 + 50, 240, 40);
+        ctx.fillStyle = 'black';
+        ctx.font = '20px Arial';
+        ctx.textAlign = 'center';
+        ctx.fillText(game.unlockText, canvas.width/2, canvas.height/2 + 75);
+        ctx.textAlign = 'left';
+    }
+    
     // Update UI
-    document.getElementById('level').textContent = game.wave;
     document.getElementById('score').textContent = game.score;
-    document.getElementById('health').textContent = Math.max(0, Math.floor(game.player.health));
-    document.getElementById('weapon').textContent = weapons[game.currentWeapon].name;
-    document.getElementById('ammo').textContent = weapons[game.currentWeapon].ammo === Infinity ? '∞' : weapons[game.currentWeapon].ammo;
 }
 
 function gameLoop() {
