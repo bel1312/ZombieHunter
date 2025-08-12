@@ -39,7 +39,9 @@ const game = {
 const weapons = [
     { name: 'Pistol', damage: 25, fireRate: 300, ammo: Infinity, unlockWave: 1 },
     { name: 'Uzi', damage: 15, fireRate: 80, ammo: Infinity, unlockWave: 2 },
-    { name: 'Shotgun', damage: 20, fireRate: 600, ammo: Infinity, unlockWave: 4, spread: 3 }
+    { name: 'Shotgun', damage: 20, fireRate: 600, ammo: Infinity, unlockWave: 4, spread: 3 },
+    { name: 'Grenade', damage: 80, fireRate: 1200, ammo: Infinity, unlockWave: 6, explosive: true },
+    { name: 'Rocket', damage: 120, fireRate: 1500, ammo: Infinity, unlockWave: 8, explosive: true }
 ];
 
 // Input handling
@@ -47,7 +49,7 @@ document.addEventListener('keydown', (e) => {
     game.keys[e.key.toLowerCase()] = true;
     
     const num = parseInt(e.key);
-    if (num >= 1 && num <= 3 && weapons[num-1].unlockWave <= game.wave) {
+    if (num >= 1 && num <= 5 && weapons[num-1].unlockWave <= game.wave) {
         if (game.currentWeapon !== num - 1) {
             game.currentWeapon = num - 1;
             game.weaponSwitchText = `Switched to ${weapons[game.currentWeapon].name}`;
@@ -192,7 +194,7 @@ function shoot() {
     if (weapon.name === 'Shotgun') {
         // Shotgun fires 3 pellets in spread
         for (let i = 0; i < 3; i++) {
-            const spreadAngle = (i - 1) * 0.3; // Wider spread
+            const spreadAngle = (i - 1) * 0.3;
             const angle = game.player.angle + spreadAngle;
             
             game.bullets.push({
@@ -201,18 +203,19 @@ function shoot() {
                 vx: Math.cos(angle) * 8,
                 vy: Math.sin(angle) * 8,
                 damage: weapon.damage,
-                explosive: weapon.explosive || false
+                explosive: false
             });
         }
     } else {
-        // Regular single shot
+        // Regular single shot or explosive
         const angle = game.player.angle;
+        const speed = weapon.explosive ? 6 : 8; // Slower for explosives
         
         game.bullets.push({
             x: game.player.x,
             y: game.player.y,
-            vx: Math.cos(angle) * 8,
-            vy: Math.sin(angle) * 8,
+            vx: Math.cos(angle) * speed,
+            vy: Math.sin(angle) * speed,
             damage: weapon.damage,
             explosive: weapon.explosive || false
         });
@@ -245,9 +248,28 @@ function updateBullets() {
             if (dist < zombie.size) {
                 zombie.health -= bullet.damage;
                 
+                // Explosive damage to nearby enemies
+                if (bullet.explosive) {
+                    game.zombies.forEach(z => {
+                        const explosionDist = Math.hypot(bullet.x - z.x, bullet.y - z.y);
+                        if (explosionDist < 60 && z !== zombie) {
+                            z.health -= bullet.damage * 0.6;
+                            z.hitFlash = 10;
+                        }
+                    });
+                    game.bosses.forEach(b => {
+                        const explosionDist = Math.hypot(bullet.x - b.x, bullet.y - b.y);
+                        if (explosionDist < 60) {
+                            b.health -= bullet.damage * 0.6;
+                            b.hitFlash = 10;
+                        }
+                    });
+                    createExplosion(bullet.x, bullet.y);
+                }
+                
                 // Hit effects
                 zombie.hitFlash = 10;
-                const pushForce = 3;
+                const pushForce = bullet.explosive ? 5 : 3;
                 const pushAngle = Math.atan2(zombie.y - bullet.y, zombie.x - bullet.x);
                 zombie.pushbackX = Math.cos(pushAngle) * pushForce;
                 zombie.pushbackY = Math.sin(pushAngle) * pushForce;
@@ -273,9 +295,28 @@ function updateBullets() {
             if (dist < boss.size) {
                 boss.health -= bullet.damage;
                 
+                // Explosive damage to nearby enemies
+                if (bullet.explosive) {
+                    game.zombies.forEach(z => {
+                        const explosionDist = Math.hypot(bullet.x - z.x, bullet.y - z.y);
+                        if (explosionDist < 60) {
+                            z.health -= bullet.damage * 0.6;
+                            z.hitFlash = 10;
+                        }
+                    });
+                    game.bosses.forEach(b => {
+                        const explosionDist = Math.hypot(bullet.x - b.x, bullet.y - b.y);
+                        if (explosionDist < 60 && b !== boss) {
+                            b.health -= bullet.damage * 0.6;
+                            b.hitFlash = 10;
+                        }
+                    });
+                    createExplosion(bullet.x, bullet.y);
+                }
+                
                 // Hit effects for boss
                 boss.hitFlash = 10;
-                const pushForce = 2;
+                const pushForce = bullet.explosive ? 3 : 2;
                 const pushAngle = Math.atan2(boss.y - bullet.y, boss.x - bullet.x);
                 boss.pushbackX = Math.cos(pushAngle) * pushForce;
                 boss.pushbackY = Math.sin(pushAngle) * pushForce;
@@ -505,10 +546,16 @@ function updateGame() {
         // Check for weapon unlocks
         if (game.wave === 2) {
             game.unlockText = 'UZI UNLOCKED! Press 2';
-            game.unlockTimer = 300; // 5 seconds
+            game.unlockTimer = 300;
         } else if (game.wave === 4) {
             game.unlockText = 'SHOTGUN UNLOCKED! Press 3';
-            game.unlockTimer = 300; // 5 seconds
+            game.unlockTimer = 300;
+        } else if (game.wave === 6) {
+            game.unlockText = 'GRENADE UNLOCKED! Press 4';
+            game.unlockTimer = 300;
+        } else if (game.wave === 8) {
+            game.unlockText = 'ROCKET LAUNCHER UNLOCKED! Press 5';
+            game.unlockTimer = 300;
         }
         
         game.waveDelay = 180; // 3 second delay
@@ -677,9 +724,16 @@ function render() {
     ctx.restore();
     
     // Draw bullets
-    ctx.fillStyle = '#ffff00';
     game.bullets.forEach(bullet => {
-        ctx.fillRect(bullet.x - 2, bullet.y - 2, 4, 4);
+        if (bullet.explosive) {
+            // Explosive projectiles (larger and orange)
+            ctx.fillStyle = '#ff6600';
+            ctx.fillRect(bullet.x - 3, bullet.y - 3, 6, 6);
+        } else {
+            // Regular bullets
+            ctx.fillStyle = '#ffff00';
+            ctx.fillRect(bullet.x - 2, bullet.y - 2, 4, 4);
+        }
     });
     
     // Draw zombies
