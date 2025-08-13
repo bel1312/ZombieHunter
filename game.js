@@ -32,16 +32,17 @@ const game = {
     weaponSwitchText: '',
     weaponSwitchTimer: 0,
     unlockText: '',
-    unlockTimer: 0
+    unlockTimer: 0,
+    ammoPacks: []
 };
 
 // Weapons system
 const weapons = [
-    { name: 'Pistol', damage: 25, fireRate: 300, ammo: Infinity, unlockWave: 1 },
-    { name: 'Uzi', damage: 15, fireRate: 80, ammo: Infinity, unlockWave: 2 },
-    { name: 'Shotgun', damage: 20, fireRate: 600, ammo: Infinity, unlockWave: 4, spread: 3 },
-    { name: 'Grenade', damage: 80, fireRate: 1200, ammo: Infinity, unlockWave: 6, explosive: true },
-    { name: 'Rocket', damage: 120, fireRate: 1500, ammo: Infinity, unlockWave: 8, explosive: true }
+    { name: 'Pistol', damage: 25, fireRate: 300, ammo: Infinity, maxAmmo: Infinity, unlockWave: 1 },
+    { name: 'Uzi', damage: 15, fireRate: 80, ammo: 100, maxAmmo: 100, unlockWave: 2 },
+    { name: 'Shotgun', damage: 20, fireRate: 600, ammo: 35, maxAmmo: 35, unlockWave: 4, spread: 3 },
+    { name: 'Grenade', damage: 80, fireRate: 1200, ammo: 10, maxAmmo: 10, unlockWave: 6, explosive: true },
+    { name: 'Rocket', damage: 120, fireRate: 1500, ammo: 10, maxAmmo: 10, unlockWave: 8, explosive: true }
 ];
 
 // Input handling
@@ -191,6 +192,9 @@ function updatePlayer() {
 function shoot() {
     const weapon = weapons[game.currentWeapon];
     
+    // Check ammo
+    if (weapon.ammo <= 0) return;
+    
     if (weapon.name === 'Shotgun') {
         // Shotgun fires 3 pellets in spread
         for (let i = 0; i < 3; i++) {
@@ -209,7 +213,7 @@ function shoot() {
     } else {
         // Regular single shot or explosive
         const angle = game.player.angle;
-        const speed = weapon.explosive ? 6 : 8; // Slower for explosives
+        const speed = weapon.explosive ? 6 : 8;
         
         game.bullets.push({
             x: game.player.x,
@@ -219,6 +223,11 @@ function shoot() {
             damage: weapon.damage,
             explosive: weapon.explosive || false
         });
+    }
+    
+    // Consume ammo (except pistol)
+    if (weapon.ammo !== Infinity) {
+        weapon.ammo--;
     }
 }
 
@@ -502,6 +511,49 @@ function updateParticles() {
     // Blood splats persist (no fading)
 }
 
+function spawnAmmoPack() {
+    const locations = [
+        {x: 100, y: 100}, {x: 700, y: 100}, {x: 100, y: 500}, {x: 700, y: 500},
+        {x: 400, y: 150}, {x: 400, y: 450}, {x: 200, y: 300}, {x: 600, y: 300}
+    ];
+    
+    const location = locations[Math.floor(Math.random() * locations.length)];
+    game.ammoPacks.push({
+        x: location.x,
+        y: location.y,
+        collected: false,
+        respawnTimer: 0
+    });
+}
+
+function updateAmmoPacks() {
+    game.ammoPacks.forEach(pack => {
+        if (!pack.collected) {
+            // Check player collision
+            const dist = Math.hypot(game.player.x - pack.x, game.player.y - pack.y);
+            if (dist < 20) {
+                // Collect ammo pack
+                pack.collected = true;
+                pack.respawnTimer = 600; // 10 seconds
+                
+                // Refill ammo for all weapons
+                for (let i = 1; i < weapons.length; i++) {
+                    weapons[i].ammo = weapons[i].maxAmmo;
+                }
+                
+                game.weaponSwitchText = 'AMMO REFILLED!';
+                game.weaponSwitchTimer = 120;
+            }
+        } else {
+            // Handle respawn
+            pack.respawnTimer--;
+            if (pack.respawnTimer <= 0) {
+                pack.collected = false;
+            }
+        }
+    });
+}
+
 function updateGame() {
     // Health regeneration
     if (game.player.health < game.player.maxHealth && Date.now() - game.player.lastDamageTime > 3000) {
@@ -514,6 +566,9 @@ function updateGame() {
     // Update timers
     if (game.weaponSwitchTimer > 0) game.weaponSwitchTimer--;
     if (game.unlockTimer > 0) game.unlockTimer--;
+    
+    // Update ammo packs
+    updateAmmoPacks();
     
     // Wave system
     if (!game.waveActive && game.waveDelay <= 0) {
@@ -584,6 +639,34 @@ function getWaveZombieCount() {
 
 function startWave() {
     game.waveActive = true;
+    
+    // Update weapon ammo capacity based on wave
+    if (game.wave >= 2) {
+        const uziWaves = game.wave - 2;
+        weapons[1].maxAmmo = 100 * Math.pow(2, uziWaves); // Uzi: 100/200/400...
+    }
+    
+    if (game.wave >= 4) {
+        const shotgunWaves = game.wave - 4;
+        if (shotgunWaves === 0) weapons[2].maxAmmo = 35;
+        else if (shotgunWaves === 1) weapons[2].maxAmmo = 70;
+        else weapons[2].maxAmmo = 35 + 35 * shotgunWaves + 30 * (shotgunWaves - 1); // 35/70/135...
+    }
+    
+    if (game.wave >= 6) {
+        const grenadeWaves = game.wave - 6;
+        weapons[3].maxAmmo = 10 * Math.pow(2, grenadeWaves); // Grenade: 10/20/40...
+    }
+    
+    if (game.wave >= 8) {
+        const rocketWaves = game.wave - 8;
+        weapons[4].maxAmmo = 10 * Math.pow(2, rocketWaves); // Rocket: 10/20/40...
+    }
+    
+    // Spawn ammo pack
+    if (Math.random() < 0.7) {
+        spawnAmmoPack();
+    }
 }
 
 function render() {
@@ -840,6 +923,24 @@ function render() {
         ctx.globalAlpha = 1;
     });
     
+    // Draw ammo packs
+    game.ammoPacks.forEach(pack => {
+        if (!pack.collected) {
+            // Ammo pack box
+            ctx.fillStyle = '#4a4a4a';
+            ctx.fillRect(pack.x - 8, pack.y - 8, 16, 16);
+            ctx.fillStyle = '#ffff00';
+            ctx.fillRect(pack.x - 6, pack.y - 6, 12, 12);
+            
+            // Ammo symbol
+            ctx.fillStyle = '#000';
+            ctx.font = '12px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText('A', pack.x, pack.y + 4);
+            ctx.textAlign = 'left';
+        }
+    });
+    
     // In-game score display
     ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
     ctx.fillRect(canvas.width/2 - 60, 10, 120, 30);
@@ -899,6 +1000,18 @@ function render() {
         ctx.font = '20px Arial';
         ctx.textAlign = 'center';
         ctx.fillText(game.unlockText, canvas.width/2, canvas.height/2 + 75);
+        ctx.textAlign = 'left';
+    }
+    
+    // Ammo display (bottom right)
+    if (game.currentWeapon > 0) {
+        const weapon = weapons[game.currentWeapon];
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+        ctx.fillRect(canvas.width - 120, canvas.height - 40, 110, 30);
+        ctx.fillStyle = weapon.ammo > 0 ? 'white' : 'red';
+        ctx.font = '16px Arial';
+        ctx.textAlign = 'right';
+        ctx.fillText(`${weapon.name}: ${weapon.ammo}/${weapon.maxAmmo}`, canvas.width - 15, canvas.height - 20);
         ctx.textAlign = 'left';
     }
     
