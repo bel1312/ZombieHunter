@@ -27,8 +27,8 @@ const game = {
     waveZombiesKilled: 0,
     waveActive: false,
     waveDelay: 0,
-    bossPhase: false,
     bossesSpawned: 0,
+    swarmTimer: 0,
     weaponSwitchText: '',
     weaponSwitchTimer: 0,
     unlockText: '',
@@ -40,7 +40,7 @@ const game = {
 const weapons = [
     { name: 'Pistol', damage: 25, fireRate: 300, ammo: Infinity, maxAmmo: Infinity, unlockWave: 1 },
     { name: 'Uzi', damage: 15, fireRate: 80, ammo: 100, maxAmmo: 100, unlockWave: 2 },
-    { name: 'Shotgun', damage: 20, fireRate: 600, ammo: 35, maxAmmo: 35, unlockWave: 4, spread: 3 },
+    { name: 'Shotgun', damage: 60, fireRate: 600, ammo: 35, maxAmmo: 35, unlockWave: 4, spread: 3 },
     { name: 'Grenade', damage: 80, fireRate: 1200, ammo: 10, maxAmmo: 10, unlockWave: 6, explosive: true },
     { name: 'Rocket', damage: 120, fireRate: 1500, ammo: 10, maxAmmo: 10, unlockWave: 8, explosive: true }
 ];
@@ -534,7 +534,7 @@ function updateAmmoPacks() {
             if (dist < 20) {
                 // Collect ammo pack
                 pack.collected = true;
-                pack.respawnTimer = 600; // 10 seconds
+                pack.respawnTimer = 180; // 3 seconds
                 
                 // Refill ammo for all weapons
                 for (let i = 1; i < weapons.length; i++) {
@@ -579,23 +579,40 @@ function updateGame() {
         game.waveDelay--;
     }
     
-    // Check if zombie phase is complete
-    if (game.waveActive && !game.bossPhase && game.waveZombiesKilled >= getWaveZombieCount()) {
-        game.bossPhase = true;
-        game.bossesSpawned = 0;
+    // Spawn enemies during wave
+    if (game.waveActive && game.waveZombiesSpawned < getWaveZombieCount()) {
+        // Swarm spawning - higher chance in bursts
+        game.swarmTimer++;
+        let spawnChance = 0.01;
+        
+        // Create swarm every 300 frames (5 seconds)
+        if (game.swarmTimer % 300 < 60) { // 1 second swarm window
+            spawnChance = 0.15; // Much higher spawn rate during swarm
+        }
+        
+        if (Math.random() < spawnChance) {
+            spawnZombie();
+        }
     }
     
-    // Spawn bosses during boss phase
-    if (game.bossPhase && game.bossesSpawned < game.wave) {
-        if (Math.random() < 0.02) {
+    // Spawn bosses throughout the wave (not just at the end)
+    if (game.waveActive && game.bossesSpawned < game.wave) {
+        const waveProgress = game.waveZombiesKilled / getWaveZombieCount();
+        let bossSpawnChance = 0.001; // Base chance
+        
+        // Higher chance in the last 30% of the wave
+        if (waveProgress > 0.7) {
+            bossSpawnChance = 0.008;
+        }
+        
+        if (Math.random() < bossSpawnChance) {
             spawnBoss();
         }
     }
     
     // Check if wave is complete (all zombies and bosses defeated)
-    if (game.bossPhase && game.bosses.length === 0 && game.bossesSpawned >= game.wave) {
+    if (game.waveActive && game.waveZombiesKilled >= getWaveZombieCount() && game.bosses.length === 0 && game.bossesSpawned >= game.wave) {
         game.waveActive = false;
-        game.bossPhase = false;
         game.wave++;
         
         // Check for weapon unlocks
@@ -616,14 +633,9 @@ function updateGame() {
         game.waveDelay = 180; // 3 second delay
         game.waveZombiesSpawned = 0;
         game.waveZombiesKilled = 0;
+        game.bossesSpawned = 0;
+        game.swarmTimer = 0;
         game.player.health = Math.min(game.player.maxHealth, game.player.health + 30);
-    }
-    
-    // Spawn zombies during wave
-    if (game.waveActive && game.waveZombiesSpawned < getWaveZombieCount()) {
-        if (Math.random() < 0.02) {
-            spawnZombie();
-        }
     }
     
     // Game over
@@ -961,14 +973,14 @@ function render() {
         ctx.textAlign = 'left';
     }
     
-    // Boss phase indicator
-    if (game.bossPhase && game.bosses.length > 0) {
+    // Boss indicator
+    if (game.bosses.length > 0) {
         ctx.fillStyle = 'rgba(255, 0, 0, 0.3)';
         ctx.fillRect(0, 0, canvas.width, 30);
         ctx.fillStyle = 'white';
         ctx.font = '20px Arial';
         ctx.textAlign = 'center';
-        ctx.fillText(`BOSS FIGHT - ${game.bosses.length} remaining`, canvas.width/2, 22);
+        ctx.fillText(`BOSSES: ${game.bosses.length}`, canvas.width/2, 22);
         ctx.textAlign = 'left';
     }
     
